@@ -253,7 +253,7 @@ object Test extends ScalaCommand[TestOptions] {
             testFrameworkOpt0.map(fw => s"--test-framework=$fw").toSeq ++
             testOnly.map(to => s"--test-only=$to").toSeq ++
             Seq("--") ++ args
-
+        
         Runner.runJvm(
           build.options.javaHome().value.javaCommand,
           build.options.javaOptions.javaOpts.toSeq.map(_.value.value),

@@ -11,17 +11,12 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters._
 
-sealed abstract class TestDetectorException(message: String) extends Exception(message)
-object TestDetectorException {
-  case class NoTestFrameworkFoundException()
-      extends TestDetectorException("No test framework found")
-
-  case class RequireTestsNoneRan()
-      extends TestDetectorException("Error: no tests were run.")
-}
-
 // TODO rename all occurances to something like "DyanmicTestDetector"
 object DynamicTestRunner {
+
+  case class NoTestFrameworkFoundException()
+      extends Exception("No test framework found")
+
   def testRunnerClassPathAndLoader() = {
     val classLoader = Thread.currentThread().getContextClassLoader
     val classPath   = TestRunner.classPath(classLoader)
@@ -33,11 +28,11 @@ object DynamicTestRunner {
     testFrameworkOpt: Option[String],
     classLoader: ClassLoader,
     testRunnerClassPath: Seq[Path]
-  ): Either[TestDetectorException.NoTestFrameworkFoundException, Framework] =
+  ): Either[NoTestFrameworkFoundException, Framework] =
     testFrameworkOpt.map(loadFramework(classLoader, _))
       .orElse(findFrameworkService(classLoader))
       .orElse(findFramework(testRunnerClassPath, classLoader, TestRunner.commonTestFrameworks))
-      .toRight(TestDetectorException.NoTestFrameworkFoundException())
+      .toRight(NoTestFrameworkFoundException())
 
   def findTestClasses(
     framework: Framework,
@@ -286,7 +281,7 @@ object DynamicTestRunner {
         _            = runner.done().map(doneMsg => System.out.println(doneMsg))
 
         _ <- if (requireTests && events.isEmpty)
-          Left(TestDetectorException.RequireTestsNoneRan())
+          Left(new Exception("Error: no tests were run."))
         else Right(())
       } yield events.exists { ev =>
         ev.status == Status.Error ||

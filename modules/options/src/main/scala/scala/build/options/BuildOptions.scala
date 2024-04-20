@@ -38,7 +38,15 @@ final case class BuildOptions(
   internalDependencies: InternalDependenciesOptions = InternalDependenciesOptions(),
   javaOptions: JavaOptions = JavaOptions(),
   jmhOptions: JmhOptions = JmhOptions(),
+
+  
+  // STOPPING POINT:  i RELIZED THAT THE TEST DEPENDENCY ALREADY 
+  // LIVES IN HERE. we need to find src and figure out how it got here. then,
+  // enable it on the first pass
   classPathOptions: ClassPathOptions = ClassPathOptions(),
+
+
+
   scriptOptions: ScriptOptions = ScriptOptions(),
   internal: InternalOptions = InternalOptions(),
   mainClass: Option[String] = None,
@@ -404,6 +412,7 @@ final case class BuildOptions(
     logger: Logger,
     scope: Scope,
     maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e)
+    // TODO: we should add something like "second compile" here.
   ): Either[BuildException, Artifacts] = either {
     val isTests = scope == Scope.Test
     val scalaArtifactsParamsOpt = value(scalaParams) match {
@@ -435,6 +444,7 @@ final case class BuildOptions(
       if (scalaArtifactsParamsOpt.isDefined) None
       else Some(false) // no runner in pure Java mode
     }
+    value(dependencies).foreach(dep => println(dep.value.module.name))
     val maybeArtifacts = Artifacts(
       scalaArtifactsParamsOpt,
       javacPluginDependencies = value(javacPluginDependencies),

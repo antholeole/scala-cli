@@ -14,6 +14,7 @@ import scala.build.EitherCps.{either, value}
 import scala.build.Ops.*
 import scala.build.compiler.{ScalaCompiler, ScalaCompilerMaker}
 import scala.build.errors.*
+import scala.build.testrunner.DynamicTestRunner
 import scala.build.input.VirtualScript.VirtualScriptNameRegex
 import scala.build.input.*
 import scala.build.internal.resource.ResourceMapper
@@ -273,6 +274,8 @@ object Build {
 
       val scopedSources = value(crossSources.scopedSources(baseOptions))
 
+      // TODO: figure this out - need to demote these to test scope 
+      // if they use a suite path
       val mainSources =
         value(scopedSources.sources(Scope.Main, baseOptions, allInputs.workspace, logger))
       val mainOptions = mainSources.buildOptions
@@ -316,6 +319,13 @@ object Build {
         }
 
       val mainBuild = value(doBuildScope(mainOptions, mainSources, Scope.Main))
+
+      if (mainBuild.isInstanceOf[Build.Successful]) {
+        println("SUCCESS!")
+      } else {
+        println("FAILED :(")
+      }
+
       val mainDocBuildOpt = docCompilerOpt match {
         case None => None
         case Some(docCompiler) =>
@@ -332,6 +342,7 @@ object Build {
           val actualCompilerOpt =
             if (doc) docCompilerOpt
             else Some(compiler)
+            // TODO maybe demote it here?
           actualCompilerOpt match {
             case None => None
             case Some(actualCompiler) =>
@@ -1106,6 +1117,8 @@ object Build {
     }
 
     val success = partial || compiler.compile(project, logger)
+
+    // TODO Here?
 
     if (success)
       Successful(
