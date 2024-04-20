@@ -11,7 +11,49 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters._
 
+sealed abstract class TestDetectorException(message: String) extends Exception(message)
+object TestDetectorException {
+  case class NoTestFrameworkFoundException()
+      extends TestDetectorException("No test framework found")
+
+  case class RequireTestsNoneRan()
+      extends TestDetectorException("Error: no tests were run.")
+}
+
+// TODO rename all occurances to something like "DyanmicTestDetector"
 object DynamicTestRunner {
+  def testRunnerClassPathAndLoader() = {
+    val classLoader = Thread.currentThread().getContextClassLoader
+    val classPath   = TestRunner.classPath(classLoader)
+
+    (classLoader, classPath)
+  }
+
+  def findFramework(
+    testFrameworkOpt: Option[String],
+    classLoader: ClassLoader,
+    testRunnerClassPath: Seq[Path]
+  ): Either[TestDetectorException.NoTestFrameworkFoundException, Framework] =
+    testFrameworkOpt.map(loadFramework(classLoader, _))
+      .orElse(findFrameworkService(classLoader))
+      .orElse(findFramework(testRunnerClassPath, classLoader, TestRunner.commonTestFrameworks))
+      .toRight(TestDetectorException.NoTestFrameworkFoundException())
+
+  def findTestClasses(
+    framework: Framework,
+    classLoader: ClassLoader,
+    testRunnerClassPath: Seq[Path]
+  ): Iterator[(Class[_], Fingerprint)] = {
+    val fingerprints = framework.fingerprints
+    val classes = listClasses(testRunnerClassPath)
+      .map(name => classLoader.loadClass(name))
+
+    classes.flatMap { cls =>
+      matchFingerprints(classLoader, cls, fingerprints)
+        .map((cls, _))
+        .iterator
+    }
+  }
 
   // adapted from https://github.com/com-lihaoyi/mill/blob/ab4d61a50da24fb7fac97c4453dd8a770d8ac62b/scalalib/src/Lib.scala#L156-L172
   private def matchFingerprints(
@@ -86,7 +128,8 @@ object DynamicTestRunner {
     }
     else Iterator.empty
 
-  def listClasses(classPath: Seq[Path], keepJars: Boolean): Iterator[String] =
+  // "keepJars" looks into dependencies; this is much slower and defaults to false.
+  def listClasses(classPath: Seq[Path], keepJars: Boolean = false): Iterator[String] =
     classPath.iterator.flatMap(listClasses(_, keepJars))
 
   def findFrameworkService(loader: ClassLoader): Option[Framework] =
@@ -218,60 +261,50 @@ object DynamicTestRunner {
       parse(None, Nil, false, 0, None, args.toList)
     }
 
-    val classLoader = Thread.currentThread().getContextClassLoader
-    val classPath0  = TestRunner.classPath(classLoader)
-    val framework = testFrameworkOpt.map(loadFramework(classLoader, _))
-      .orElse(findFrameworkService(classLoader))
-      .orElse(findFramework(classPath0, classLoader, TestRunner.commonTestFrameworks))
-      .getOrElse {
-        if (verbosity >= 2)
-          sys.error("No test framework found")
+    val (classLoader, testRunnerClassPath) = testRunnerClassPathAndLoader()
+    val runFailed =
+      for {
+        framework <- findFramework(testFrameworkOpt, classLoader, testRunnerClassPath)
+        clsFingerprints = findTestClasses(framework, classLoader, testRunnerClassPath)
+
+        runner = framework.runner(args0.toArray, Array(), classLoader)
+
+        taskDefs = clsFingerprints
+          .filter {
+            case (cls, _) =>
+              testOnly.forall(pattern =>
+                globPattern(pattern).matcher(cls.getName.stripSuffix("$")).matches()
+              )
+          }
+          .map {
+            case (cls, fp) =>
+              new TaskDef(cls.getName.stripSuffix("$"), fp, false, Array(new SuiteSelector))
+          }
+          .toVector
+        initialTasks = runner.tasks(taskDefs.toArray)
+        events       = TestRunner.runTasks(initialTasks.toIndexedSeq, System.out)
+        _            = runner.done().map(doneMsg => System.out.println(doneMsg))
+
+        _ <- if (requireTests && events.isEmpty)
+          Left(TestDetectorException.RequireTestsNoneRan())
+        else Right(())
+      } yield events.exists { ev =>
+        ev.status == Status.Error ||
+        ev.status == Status.Failure ||
+        ev.status == Status.Canceled
+      }
+
+    runFailed match {
+      case Left(e) => if (verbosity >= 2)
+          sys.error(e.getMessage)
         else {
-          System.err.println("No test framework found")
+          System.err.println(e.getMessage)
           sys.exit(1)
         }
-      }
-    def classes = {
-      val keepJars = false // look into dependencies, much slower
-      listClasses(classPath0, keepJars).map(name => classLoader.loadClass(name))
+      case Right(failed) if failed =>
+        sys.exit(1)
+      case _ => ()
     }
-    val out = System.out
-
-    val fingerprints = framework.fingerprints()
-    val runner       = framework.runner(args0.toArray, Array(), classLoader)
-    def clsFingerprints = classes.flatMap { cls =>
-      matchFingerprints(classLoader, cls, fingerprints)
-        .map((cls, _))
-        .iterator
-    }
-    val taskDefs = clsFingerprints
-      .filter {
-        case (cls, _) =>
-          testOnly.forall(pattern =>
-            globPattern(pattern).matcher(cls.getName.stripSuffix("$")).matches()
-          )
-      }
-      .map {
-        case (cls, fp) =>
-          new TaskDef(cls.getName.stripSuffix("$"), fp, false, Array(new SuiteSelector))
-      }
-      .toVector
-    val initialTasks = runner.tasks(taskDefs.toArray)
-    val events       = TestRunner.runTasks(initialTasks, out)
-    val failed = events.exists { ev =>
-      ev.status == Status.Error ||
-      ev.status == Status.Failure ||
-      ev.status == Status.Canceled
-    }
-    val doneMsg = runner.done()
-    if (doneMsg.nonEmpty)
-      out.println(doneMsg)
-    if (requireTests && events.isEmpty) {
-      System.err.println("Error: no tests were run.")
-      sys.exit(1)
-    }
-    if (failed)
-      sys.exit(1)
   }
 }
 
